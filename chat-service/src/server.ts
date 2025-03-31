@@ -5,24 +5,25 @@ import dotenv from 'dotenv';
 import connectDB from './config/db';
 import multer from 'multer';
 import otpRoutes from "./routes/otpRoutes";
-import {authConsumer} from "./consumers/authConsumer";
 
-dotenv.config();
+dotenv.config(); // Load environment variables from .env file
 
 const app = express();
 
 // Middleware
-app.use(express.json());
+app.use(express.json()); // Parses incoming requests with JSON payloads
 
 // Middleware to handle form-data
-const upload = multer();
-app.use(upload.none());
+const upload = multer(); // You can configure multer to store files if needed
+
+// Middleware to parse form-data
+app.use(upload.none()); // This is used when you're not uploading any files, just data
 
 // MongoDB Connection
-connectDB().then(()=> authConsumer());
+connectDB();
 
 // Use the auth routes
-app.use('/auth', authRoutes); // Mounts the auth routes
+app.use('/api/auth', authRoutes); // Mounts the auth routes
 
 // Use the auth routes
 app.use('/otp',otpRoutes); // Mounts the auth routes
@@ -37,5 +38,5 @@ app.use((err: any, res: Response) => {
 const PORT = process.env.PORT;
 
 app.listen(PORT, () => {
-    console.log(`Auth Server is running on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });

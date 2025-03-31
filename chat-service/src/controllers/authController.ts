@@ -4,17 +4,18 @@ import jwt from 'jsonwebtoken';
 import {User} from '../models/userModel';
 import dotenv from 'dotenv';
 import {sendOTP, verifyOTP} from "./otpController";
-import {publishToQueue} from "../config/rabbitmq";
 
 dotenv.config();
+
 
 let tempUser: any; // Temporary storage for user details
 
 export const signUp = async (req: Request, res: Response, next: NextFunction) => {
-    const {email, password} = req.body;
+    const { name, email, password } = req.body;
+
     // Check if all required fields are present
-    if (!email || !password) {
-        return res.status(400).json({ message: 'email and password are required.' });
+    if (!name || !email || !password) {
+        return res.status(400).json({ message: 'All fields (name, email, password) are required.' });
     }
 
     try {
@@ -23,11 +24,13 @@ export const signUp = async (req: Request, res: Response, next: NextFunction) =>
             return res.status(400).send('User already exists.');
         }
 
-        tempUser = { email, password};
+        // Temporarily store the user details (before OTP verification)
+        tempUser = { name, email, password };
 
         // Send OTP
-        const otpToken = await sendOTP(email);
-        return res.status(200).json({success: true, otpToken, message: 'OTP sent to your email. Please enter the OTP to complete sign-up.' });
+        const otpToken = await sendOTP(email); // Call sendOTP directly
+        return res.status(200).json({ otpToken, message: 'OTP sent to your email. Please enter the OTP to complete sign-up.' });
+
     } catch (err) {
         next(err);
     }
@@ -42,6 +45,7 @@ export const completeSignUp = async (req: Request, res: Response, next: NextFunc
     }
 
     try {
+        // Call the verifyOTP function and capture its response
         const otpVerificationResult = await verifyOTP(otpToken, otp);
 
         // If OTP verification was successful, proceed with account creation
@@ -50,20 +54,21 @@ export const completeSignUp = async (req: Request, res: Response, next: NextFunc
                 return res.status(400).json({ message: 'No user details found for OTP verification.' });
             }
 
+            // Hash the password
+            const hashedPassword = await bcrypt.hash(tempUser.password, 10);
+
             // Create the new user
-            await(publishToQueue("signupQueue",{ email:tempUser.email, password: tempUser.password }));
+            const user = new User({ name: tempUser.name, email: tempUser.email, password: hashedPassword });
+            await user.save();
 
-            // Generate JWT token
-            const token = jwt.sign({ email: tempUser.email }, process.env.JWT_SECRET as string, { expiresIn: "1d" });
-
-            // Publish session to RabbitMQ
-            await publishToQueue("authQueue", { userId:tempUser.email, token });
-
-            // Clear the tempUser when requests pushed to queue
+            // Clear the tempUser once sign-up is complete
             tempUser = null;
 
+            // Generate JWT token
+            const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET as string, { expiresIn: '2h' });
+
             // Respond with token and success message
-            res.status(201).json({success: true, token, message: 'User signed up successfully.' });
+            res.status(201).json({ token, message: 'User signed up successfully.' });
         } else {
             // OTP verification failed
             res.status(400).json({ message: otpVerificationResult.message });
@@ -89,12 +94,8 @@ export const signIn = async (req: Request, res: Response, next: NextFunction) =>
             return;
         }
 
-        const token = jwt.sign({ email:email }, process.env.JWT_SECRET as string, { expiresIn: '1d' });
-
-        // Publish Session to RabbitMQ queue
-        await publishToQueue("authQueue", { userId: email, token });
-
-        res.json({success: true, token });
+        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET as string, { expiresIn: '1h' });
+        res.json({ token });
         return;
     } catch (err) {
         next(err);
